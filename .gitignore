@@ -1,0 +1,12 @@
+node_modules/
+dist/
+dist-pages/
+coverage/
+*.local
+.DS_Store
+Thumbs.db
+*.tsbuildinfo
+.vite/
+playwright-report/
+test-results/
+capture-frames/
