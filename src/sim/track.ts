@@ -166,18 +166,46 @@ export function buildTrack(seed?: number): TrackData {
     };
   };
 
-  const project = (x: number, z: number): Projection => {
+  const project = (x: number, z: number, holder?: { idx?: number }): Projection => {
     let bi = 0;
     let bd = Infinity;
-    for (let i = 0; i < N; i++) {
-      const dx = points[i].x - x;
-      const dz = points[i].z - z;
-      const d2 = dx * dx + dz * dz;
-      if (d2 < bd) {
-        bd = d2;
-        bi = i;
+    const HINT_WINDOW = 16;
+    if (holder && typeof holder.idx === 'number') {
+      // neighborhood-first scan around the last known index
+      for (let o = -HINT_WINDOW; o <= HINT_WINDOW; o++) {
+        const i = (((holder.idx + o) % N) + N) % N;
+        const dx = points[i].x - x;
+        const dz = points[i].z - z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < bd) {
+          bd = d2;
+          bi = i;
+        }
+      }
+      if (bd > 900) {
+        // hint went stale — full scan
+        for (let i = 0; i < N; i++) {
+          const dx = points[i].x - x;
+          const dz = points[i].z - z;
+          const d2 = dx * dx + dz * dz;
+          if (d2 < bd) {
+            bd = d2;
+            bi = i;
+          }
+        }
+      }
+    } else {
+      for (let i = 0; i < N; i++) {
+        const dx = points[i].x - x;
+        const dz = points[i].z - z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < bd) {
+          bd = d2;
+          bi = i;
+        }
       }
     }
+    if (holder) holder.idx = bi;
     let bestSeg = bi;
     let bestT = 0;
     let bestD2 = bd;
@@ -291,13 +319,11 @@ export function buildTrack(seed?: number): TrackData {
     surface: 'oil',
   });
 
-  const surfaceAt = (x: number, z: number, _y: number): SurfaceId => {
+  const surfaceAt = (x: number, z: number, _y: number, holder?: { idx?: number }): SurfaceId => {
     for (const zn of surfaceZones) {
-      const dx = x - zn.x;
-      const dz = z - zn.z;
-      if (dx * dx + dz * dz <= zn.r * zn.r) return zn.surface;
+      if (Math.hypot(x - zn.x, z - zn.z) <= zn.r) return zn.surface;
     }
-    const pr = project(x, z);
+    const pr = project(x, z, holder);
     const sm = sampleAt(pr.dist);
     const al = Math.abs(pr.lateral);
     if (al <= sm.width / 2 - 0.7) return 'tarmac';

@@ -76,9 +76,9 @@ export interface TrackData {
   length: number;
   gridSlots: GridSlot[]; // at least 8
   startPoint: GridSlot;
-  project(x: number, z: number): Projection;
+  project(x: number, z: number, holder?: { idx?: number }): Projection;
   sampleAt(dist: number): TrackPoint; // wraps
-  surfaceAt(x: number, z: number, y: number): SurfaceId;
+  surfaceAt(x: number, z: number, y: number, holder?: { idx?: number }): SurfaceId;
   checkpointFracs: number[]; // fractions of length for interior gates, ordered
   shortcut: { enterDist: number; exitDist: number } | null; // main-loop range bypassed by shortcut
   boundsMin: { x: number; z: number };

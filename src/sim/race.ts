@@ -49,6 +49,7 @@ export class RaceManager {
   private trackers: CarTracker[];
   private lapsTotal: number;
   private finishedAnnounced = false;
+  private cpsAbsCache: number[] | null = null;
 
   constructor(
     public readonly track: TrackData,
@@ -111,6 +112,7 @@ export class RaceManager {
 
     this.raceTime += dt;
     const speeds = this.computeRubberBands();
+    const progress = this.progressList(); // once per tick, shared by all drivers
 
     for (let i = 0; i < n; i++) {
       const veh = this.vehicles[i];
@@ -120,14 +122,17 @@ export class RaceManager {
         continue;
       }
       const drv = this.drivers[i];
-      if (drv) veh.applyControls(drv.update(dt, this.progressList(), veh.id, this.track, speeds[i]));
+      if (drv) veh.applyControls(drv.update(dt, progress, veh.id, this.track, speeds[i]));
       else veh.applyControls(playerControls);
     }
   }
 
   /** Called by the sim loop AFTER world.step so states are fresh. */
   postStep(dt: number): void {
-    const cpsAbs = this.track.checkpointFracs.map((f) => f * this.track.length);
+    if (!this.cpsAbsCache) {
+      this.cpsAbsCache = this.track.checkpointFracs.map((f) => f * this.track.length);
+    }
+    const cpsAbs = this.cpsAbsCache;
     const L = this.track.length;
 
     for (let i = 0; i < this.trackers.length; i++) {
@@ -255,10 +260,11 @@ export class RaceManager {
       const wedged = st.speed < 0.35 && Math.abs(st.forwardSpeed) < 0.25 && st.upDot >= 0.15;
       t.wedgedTimer = wedged ? t.wedgedTimer + dt : 0;
       // stray: way off the roadway for too long -> respawn on track
+      // (grace > AI's own recovery timer so recovery gets first chance)
       const hwHere = this.track.sampleAt(t.dist).width * 0.5;
       if (Math.abs(raw.lateral) > hwHere + 2.5) t.strayTimer += dt;
       else t.strayTimer = 0;
-      if (t.strayTimer > 2.5 && this.phase === 'racing') {
+      if (t.strayTimer > 3.6 && this.phase === 'racing') {
         this.respawn(i);
         continue;
       }

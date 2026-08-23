@@ -89,6 +89,10 @@ export class Vehicle implements VehicleLike {
 
   private impactQueue: ImpactEvent[] = [];
   private readonly wheelSurfaces: SurfaceId[] = ['tarmac', 'tarmac', 'tarmac', 'tarmac'];
+  /** Per-wheel projection hints for fast surface lookups. */
+  private readonly wheelHints: { idx?: number }[] = [
+    {}, {}, {}, {},
+  ];
 
   private readonly fwdAxis = new CANNON.Vec3();
   private readonly rightAxis = new CANNON.Vec3();
@@ -107,7 +111,7 @@ export class Vehicle implements VehicleLike {
     const box = new CANNON.Box(new CANNON.Vec3(he.x, he.y, he.z));
     this.chassisBody = new CANNON.Body({ mass: VEHICLE.mass });
     this.chassisBody.addShape(box, new CANNON.Vec3(0, Math.abs(VEHICLE.comYOffset), 0));
-    this.chassisBody.angularDamping = 0.35;
+    this.chassisBody.angularDamping = 0.18;
     this.chassisBody.linearDamping = 0.01;
     this.chassisBody.allowSleep = false;
 
@@ -328,15 +332,18 @@ export class Vehicle implements VehicleLike {
       body.applyForce(this.tmpB, this.zeroVec);
     }
 
-    // 7. yaw stability assist: damp spin when sliding fast; never fully fights deliberate spins
+    // 7. yaw stability assist: damp spin when sliding fast, but yield to the
+    // driver — active steering into the slide reduces assist so deliberate
+    // drifts and counter-steer saves survive
     if (this.maxContactSlip > VEHICLE.yawAssistSlipStart && planarSpeed > 8) {
       const strength = clamp(
         (this.maxContactSlip - VEHICLE.yawAssistSlipStart) / 0.5,
         0,
         1
       );
+      const handsOn = Math.min(1, Math.abs(this.steerAngle) / 0.45);
       const tau = clamp(
-        -w.y * VEHICLE.yawAssistTorque * strength,
+        -w.y * VEHICLE.yawAssistTorque * strength * (1 - 0.65 * handsOn),
         -VEHICLE.yawAssistTorque,
         VEHICLE.yawAssistTorque
       );
@@ -372,7 +379,7 @@ export class Vehicle implements VehicleLike {
       if (contact && rr.hasHit) {
         const hp = rr.hitPointWorld;
         t.contact = true;
-        t.surface = this.track.surfaceAt(hp.x, hp.z, hp.y);
+        t.surface = this.track.surfaceAt(hp.x, hp.z, hp.y, this.wheelHints[i]);
         t.worldX = hp.x;
         t.worldY = hp.y;
         t.worldZ = hp.z;
@@ -557,8 +564,9 @@ export class Vehicle implements VehicleLike {
     const c = e?.contact;
     if (!c) return;
     const closing = Math.abs(c.getImpactVelocityAlongNormal());
-    const proxy = clamp(closing * VEHICLE.mass * 0.02, 0, 60000);
-    if (proxy < 900) return; // resting-contact noise
+    // momentum transfer proxy (N*s): closing speed x vehicle mass
+    const proxy = clamp(closing * VEHICLE.mass, 0, 120000);
+    if (proxy < 9000) return; // ~<7 m/s closing = resting/scrape noise
     let px: number;
     let py: number;
     let pz: number;

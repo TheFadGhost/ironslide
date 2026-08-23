@@ -353,19 +353,23 @@ class AIDriverImpl implements AIDriver {
       this.reverseTimer = AI.reverseTime + 0.4;
     }
 
-    // corner-speed limit: min curvature allowance over the lookahead window
+    // corner-speed limit with backward deceleration sweep: collect per-sample
+    // curvature allowances over the lookahead window, then propagate braking
+    // constraints backwards so distant corners cause early lifts
     // low-grip wheels plan with a factor matching real gravel/oil grip ratios
     const latA = (AI.latAccelBase + this.skill * AI.latAccelSkillScale) * (careful ? 0.55 : 1);
     const iHere = Math.floor(wrap(me.dist, L) / spacing);
-    const span = Math.ceil((fwdAbs * 1.6 + 35) / spacing);
-    let vAllow = VMAX_CAP;
-    for (let k = 0; k <= span; k++) {
+    const span = Math.ceil((fwdAbs * 1.6 + 60) / spacing);
+    let nextAllow = VMAX_CAP;
+    for (let k = span; k >= 0; k--) {
       const p = track.points[(iHere + k) % n];
       const kk = Math.abs(p.curvature);
-      if (kk < CURV_FLOOR) continue;
-      const vCorner = Math.sqrt(latA / kk) * PROFILE_SAFETY;
-      if (vCorner < vAllow) vAllow = vCorner;
+      // propagate braking constraint one sample at a time toward the present
+      const reach = Math.sqrt(nextAllow * nextAllow + 2 * AI.brakeDecel * spacing);
+      const vCorner = kk >= CURV_FLOOR ? Math.sqrt(latA / kk) * PROFILE_SAFETY : VMAX_CAP;
+      nextAllow = Math.min(vCorner, reach);
     }
+    let vAllow = nextAllow;
     if (inJunction) vAllow = Math.min(vAllow, 21);
 
     // car-following: never ram the leader, hold a headway-based pace
