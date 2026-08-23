@@ -1,25 +1,26 @@
 type Handler<T> = (payload: T) => void;
 
-export class Emitter<Events extends Record<string, unknown>> {
-  private handlers: { [K in keyof Events]?: Set<Handler<Events[K]>> } = {};
+/* eslint-disable @typescript-eslint/no-explicit-any */
+export class Emitter<Events extends object> {
+  private handlers = new Map<keyof Events, Set<Handler<any>>>();
 
   on<K extends keyof Events>(key: K, fn: Handler<Events[K]>): () => void {
-    let set = this.handlers[key];
+    let set = this.handlers.get(key);
     if (!set) {
       set = new Set();
-      this.handlers[key] = set;
+      this.handlers.set(key, set);
     }
-    set.add(fn);
-    return () => set!.delete(fn);
+    set.add(fn as Handler<any>);
+    return () => set!.delete(fn as Handler<any>);
   }
 
   emit<K extends keyof Events>(key: K, payload: Events[K]): void {
-    const set = this.handlers[key];
+    const set = this.handlers.get(key);
     if (!set) return;
     for (const fn of set) fn(payload);
   }
 
   clear(): void {
-    this.handlers = {};
+    this.handlers.clear();
   }
 }

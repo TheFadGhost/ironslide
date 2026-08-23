@@ -57,21 +57,21 @@ export const VEHICLE = {
 export const SURFACES: Record<string, { grip: number; rollDrag: number; label: string }> = {
   tarmac: { grip: 1.0, rollDrag: 0.013, label: 'tarmac' },
   kerb: { grip: 0.93, rollDrag: 0.02, label: 'kerb' },
-  gravel: { grip: 0.58, rollDrag: 0.055, label: 'gravel' },
+  gravel: { grip: 0.62, rollDrag: 0.055, label: 'gravel' },
   dirt: { grip: 0.68, rollDrag: 0.045, label: 'dirt' },
   oil: { grip: 0.44, rollDrag: 0.01, label: 'oil' },
 };
 
 export const AI = {
   count: 3, // opponents besides player
-  latAccelBase: 10.2, // m/s^2 steady-state cornering target
-  latAccelSkillScale: 2.6, // added * skill
-  longAccel: 7.5, // used in backward pass
-  brakeDecel: 12.5,
-  lookaheadBase: 7, // m pure-pursuit, scales with speed below
-  lookaheadPerSpeed: 0.55,
+  latAccelBase: 9.4, // m/s^2 steady-state cornering target
+  latAccelSkillScale: 2.2, // added * skill
+  longAccel: 6.5, // used in backward pass
+  brakeDecel: 9.0,
+  lookaheadBase: 5.5, // m pure-pursuit, scales with speed below
+  lookaheadPerSpeed: 0.42,
   steerP: 2.6,
-  steerD: 0.06,
+  steerD: 0.12,
   avoidLookaheadTime: 1.1, // s
   avoidLateralGain: 3.2, // meters of offset per closing speed factor
   stuckSpeed: 1.2, // m/s below which stuck timer runs

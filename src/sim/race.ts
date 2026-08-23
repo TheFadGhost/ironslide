@@ -17,7 +17,6 @@ export interface RaceEvents {
 }
 
 interface CarTracker extends CarProgress {
-  unwrapped: number; // monotonic-ish arc length since spawn
   prevRawDist: number;
   nextCheckpoint: number;
   lapStartTime: number;
@@ -27,6 +26,12 @@ interface CarTracker extends CarProgress {
   wrongWayOn: boolean;
   flipTimer: number;
   wedgedTimer: number;
+  stagTimer: number;
+  strayTimer: number;
+  progCheckTimer: number;
+  lastProgValue: number;
+  lastX: number;
+  lastZ: number;
 }
 
 const ZERO: VehicleControls = { throttle: 0, brake: 0, steer: 0, handbrake: false };
@@ -65,7 +70,8 @@ export class RaceManager {
         totalProgress: p.dist,
         finished: false,
         finishTime: Infinity,
-        unwrapped: p.dist,
+        // grids sit BEFORE the start line; mod-space gating handles the first
+        // crossing naturally (it carries no checkpoint credits -> not a lap)
         prevRawDist: p.dist,
         nextCheckpoint: 0,
         lapStartTime: 0,
@@ -75,6 +81,12 @@ export class RaceManager {
         wrongWayOn: false,
         flipTimer: 0,
         wedgedTimer: 0,
+        stagTimer: 0,
+        strayTimer: 0,
+        progCheckTimer: 0,
+        lastProgValue: p.dist,
+        lastX: v.state.x,
+        lastZ: v.state.z,
       };
     });
   }
@@ -127,24 +139,37 @@ export class RaceManager {
       let delta = raw.dist - t.prevRawDist;
       if (delta > L / 2) delta -= L;
       else if (delta < -L / 2) delta += L;
-      // clamp absurd jumps (teleports); resets resync explicitly
-      if (Math.abs(delta) < L / 4) t.unwrapped += delta;
+      const prevMod = t.dist;
+      if (Math.abs(delta) < L / 4) {
+        // integrate in mod space
+        t.dist = ((prevMod + delta) % L + L) % L;
+      }
       t.prevRawDist = raw.dist;
-      t.dist = ((t.unwrapped % L) + L) % L;
       t.totalProgress = t.lap * L + t.dist;
 
       if (this.phase !== 'racing') continue;
 
-      // checkpoints in order
+      const nowMod = t.dist;
+
+      // forward crossings of each gate between prevMod -> nowMod
+      const crossedForward = (target: number): boolean => {
+        if (delta <= 0) return false;
+        if (prevMod < target && nowMod >= target) return true;
+        // wrapped through 0 this step
+        if (nowMod < prevMod) return prevMod < target || nowMod >= target;
+        return false;
+      };
+
       while (
         t.nextCheckpoint < cpsAbs.length &&
-        t.unwrapped >= t.lap * L + cpsAbs[t.nextCheckpoint]
+        crossedForward(cpsAbs[t.nextCheckpoint])
       ) {
         t.nextCheckpoint++;
       }
 
-      // line crossing
-      if (t.unwrapped >= (t.lap + 1) * L) {
+      // start line (target 0): treat any forward wrap through 0
+      let wrappedForward = delta > 0 && nowMod < prevMod;
+      if (wrappedForward) {
         if (t.nextCheckpoint >= cpsAbs.length) {
           const lapTime = this.raceTime - t.lapStartTime;
           t.lastLap = lapTime;
@@ -161,11 +186,8 @@ export class RaceManager {
               this.checkAllFinished();
             }
           } else {
-            t.lap = this.lapsTotal; // keep coasting past finish without counting
+            t.lap = this.lapsTotal;
           }
-        } else {
-          // missed a checkpoint: hold them at the gate until they earn it back.
-          t.unwrapped = Math.min(t.unwrapped, t.lap * L + cpsAbs[Math.min(t.nextCheckpoint, cpsAbs.length - 1)] - 0.01);
         }
       }
 
@@ -188,32 +210,91 @@ export class RaceManager {
         t.wrongWayTimer = Math.max(0, t.wrongWayTimer - dt);
       }
 
+      // kill floor: fell off the world -> instant recovery
+      // (shortcut corridor descends below main-loop elevation; exempt it)
+      const roadYHere = this.track.sampleAt(t.dist).y;
+      let onShortcut = false;
+      if (this.track.shortcutPath.length > 1) {
+        const sp = this.track.shortcutPath;
+        for (let q = 0; q + 1 < sp.length; q++) {
+          const ax = sp[q].x;
+          const az = sp[q].z;
+          const bx = sp[q + 1].x;
+          const bz = sp[q + 1].z;
+          const abx = bx - ax;
+          const abz = bz - az;
+          const l2 = abx * abx + abz * abz || 1e-9;
+          let tt = ((st.x - ax) * abx + (st.z - az) * abz) / l2;
+          tt = tt < 0 ? 0 : tt > 1 ? 1 : tt;
+          if (Math.hypot(st.x - (ax + abx * tt), st.z - (az + abz * tt)) < 14) {
+            onShortcut = true;
+            break;
+          }
+        }
+      }
+      if (!onShortcut && st.y < roadYHere - 8) {
+        this.respawn(i);
+        continue;
+      }
+
+      // progress stagnation: racing car gaining <12m over 10s is stuck somehow
+      t.progCheckTimer += dt;
+      if (t.progCheckTimer >= 10) {
+        if (t.totalProgress - t.lastProgValue < 12 && this.drivers[i] !== null) {
+          this.respawn(i);
+          t.progCheckTimer = 0;
+          t.lastProgValue = t.totalProgress;
+          continue;
+        }
+        t.progCheckTimer = 0;
+        t.lastProgValue = t.totalProgress;
+      }
+
       // flip / wedge recovery
       t.flipTimer = st.upDot < 0.15 ? t.flipTimer + dt : 0;
       const wedged = st.speed < 0.35 && Math.abs(st.forwardSpeed) < 0.25 && st.upDot >= 0.15;
       t.wedgedTimer = wedged ? t.wedgedTimer + dt : 0;
+      // stray: way off the roadway for too long -> respawn on track
+      const hwHere = this.track.sampleAt(t.dist).width * 0.5;
+      if (Math.abs(raw.lateral) > hwHere + 2.5) t.strayTimer += dt;
+      else t.strayTimer = 0;
+      if (t.strayTimer > 2.5 && this.phase === 'racing') {
+        this.respawn(i);
+        continue;
+      }
+      // stagnation: driver-active car that barely moved over the window is wedged
+      t.stagTimer += dt;
+      if (t.stagTimer >= 4) {
+        const moved = Math.hypot(st.x - t.lastX, st.z - t.lastZ);
+        if (moved < 1.5 && this.drivers[i] !== null) {
+          t.wedgedTimer = 99;
+        }
+        t.stagTimer = 0;
+        t.lastX = st.x;
+        t.lastZ = st.z;
+      }
       if (t.flipTimer > 3.5 || t.wedgedTimer > (this.drivers[i] !== null ? 5.5 : 8)) {
         this.respawn(i);
       }
     }
   }
 
+  respawnById(id: number): void {
+    const i = this.trackers.findIndex((t) => t.id === id);
+    if (i >= 0) this.respawn(i);
+  }
+
   respawn(i: number): void {
     const t = this.trackers[i];
     const sample = this.track.sampleAt(t.dist + 4);
     const cx = sample.x;
-    const cz = sample.z + sample.lz * 0;
+    const cz = sample.z;
     const heading = Math.atan2(sample.tx, sample.tz);
     this.vehicles[i].resetTo(cx, sample.y + 1.2, cz, heading);
     t.flipTimer = 0;
     t.wedgedTimer = 0;
-    // resync progress bookkeeping after teleport
-    const p = this.track.project(cx, cz);
-    const L = this.track.length;
-    const targetUnwrapped = t.lap * L + p.dist;
-    // never move backwards in unwrapped terms beyond current lap base
-    t.unwrapped = Math.max(t.lap * L, targetUnwrapped);
-    t.prevRawDist = p.dist;
+    t.dist = this.track.project(cx, cz).dist;
+    t.prevRawDist = t.dist;
     this.events.emit('autoReset', { id: t.id });
   }
 

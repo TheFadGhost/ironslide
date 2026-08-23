@@ -1,13 +1,22 @@
 import type { VehicleControls } from '../types';
 
 export interface FrameInput extends VehicleControls {
-  cameraTogglePressed: boolean; // edge
-  resetPressed: boolean; // edge
-  pausePressed: boolean; // edge
-  source: 'keyboard' | 'gamepad';
+  cameraTogglePressed: boolean;
+  resetPressed: boolean;
+  pausePressed: boolean;
 }
 
-const KEYMAP: Record<string, string> = {
+interface PadSnapshot {
+  steer: number;
+  throttle: number;
+  brake: number;
+  handbrake: boolean;
+  cam: boolean;
+  resetBtn: boolean;
+  pauseBtn: boolean;
+}
+
+const KEYMAP: Record<string, 'throttle' | 'brake' | 'left' | 'right'> = {
   KeyW: 'throttle',
   ArrowUp: 'throttle',
   KeyS: 'brake',
@@ -16,23 +25,25 @@ const KEYMAP: Record<string, string> = {
   ArrowLeft: 'left',
   KeyD: 'right',
   ArrowRight: 'right',
-  Space: 'handbrake',
 };
 
 export class InputSystem {
+  enabled = true;
+
   private keys = new Set<string>();
   private gamepadIndex: number | null = null;
-  private lastSource: 'keyboard' | 'gamepad' = 'keyboard';
-  private prevCamera = false;
-  private prevReset = false;
-  private prevPause = false;
-  enabled = true;
+  private padWasActive = false;
+  private prevCamKey = false;
+  private prevResetKey = false;
+  private prevPauseKey = false;
+  private prevCamPad = false;
+  private prevResetPad = false;
+  private prevPausePad = false;
 
   constructor() {
     window.addEventListener('keydown', (e) => {
-      if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
+      if ((e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'BUTTON') return;
       this.keys.add(e.code);
-      this.lastSource = 'keyboard';
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
@@ -45,83 +56,86 @@ export class InputSystem {
     });
   }
 
-  private pollGamepad(): { steer: number; throttle: number; brake: number; handbrake: boolean } | null {
+  private pollPad(): PadSnapshot | null {
     const pads = navigator.getGamepads?.() ?? [];
-    const pad = (this.gamepadIndex !== null ? pads[this.gamepadIndex] : null) ?? pads.find((p) => p?.connected) ?? null;
+    const pad =
+      (this.gamepadIndex !== null ? pads[this.gamepadIndex] : null) ??
+      pads.find((p) => p && p.connected) ??
+      null;
     if (!pad) return null;
-    const dz = 0.1;
+    const btn = (i: number) => !!pad.buttons[i]?.pressed;
     let sx = pad.axes[0] ?? 0;
-    if (Math.abs(sx) < dz) sx = 0;
-    // expo curve for finer center control
-    const shaped = Math.sign(sx) * Math.pow(Math.abs(sx), 1.35);
-    const rt = pad.buttons[7]?.value ?? 0;
-    const lt = pad.buttons[6]?.value ?? 0;
-    const hand = (pad.buttons[0]?.pressed ?? false) || (pad.buttons[5]?.value ?? 0) > 0.5;
-    void dz;
-    return { steer: shaped, throttle: rt, brake: lt, handbrake: hand };
+    if (Math.abs(sx) < 0.1) sx = 0;
+    const steer = Math.sign(sx) * Math.pow(Math.abs(sx), 1.35);
+    return {
+      steer,
+      throttle: pad.buttons[7]?.value ?? 0,
+      brake: pad.buttons[6]?.value ?? 0,
+      handbrake: btn(0) || (pad.buttons[5]?.value ?? 0) > 0.5,
+      cam: btn(3),
+      resetBtn: btn(2),
+      pauseBtn: btn(9),
+    };
   }
 
-  sample(): FrameInput {
-    const gp = this.pollGamepad();
-    let out: FrameInput;
-    if (gp && (gp.steer !== 0 || gp.throttle > 0 || gp.brake > 0 || gp.handbrake)) {
-      this.lastSource = 'gamepad';
-    }
-    if (this.lastSource === 'gamepad' && gp) {
-      out = {
-        throttle: gp.throttle,
-        brake: gp.brake,
-        steer: gp.steer,
-        handbrake: gp.handbrake,
-        cameraTogglePressed: !!(padBtn(pad!, 3) && !this.prevCamera),
-        resetPressed: !!(padBtn(pad!, 2) && !this.prevReset),
-        pausePressed: !!(padBtn(pad!, 9) && !this.prevPause),
-        source: 'gamepad',
-      };
-      this.prevCamera = !!padBtn(pad!, 3);
-      this.prevReset = !!padBtn(pad!, 2);
-      this.prevPause = !!padBtn(pad!, 9);
-      // allow keyboard edges even in gamepad mode
-      if (this.keys.has('KeyC')) out.cameraTogglePressed = true;
-      if (this.keys.has('KeyR')) out.resetPressed = true;
-      if (this.keys.has('Escape') || this.keys.has('KeyP')) out.pausePressed = true;
-      if (!this.enabled) {
-        out.throttle = 0; out.brake = 0; out.steer = 0; out.handbrake = false;
-      }
-      return out;
-    }
-
+  private keyboardControls(): VehicleControls & { cam: boolean; reset: boolean; pause: boolean } {
     let left = 0, right = 0, throttle = 0, brake = 0;
     for (const code of this.keys) {
       const m = KEYMAP[code];
+      if (!m) continue;
       if (m === 'throttle') throttle = 1;
       else if (m === 'brake') brake = 1;
       else if (m === 'left') left = 1;
-      else if (m === 'right') right = 1;
+      else right = 1;
     }
-    const cam = this.keys.has('KeyC');
-    const rst = this.keys.has('KeyR');
-    const pse = this.keys.has('Escape') || this.keys.has('KeyP');
-    out = {
+    const camKey = this.keys.has('KeyC');
+    const resetKey = this.keys.has('KeyR');
+    const pauseKey = this.keys.has('Escape') || this.keys.has('KeyP');
+    return {
       throttle,
       brake,
       steer: right - left,
       handbrake: this.keys.has('Space'),
-      cameraTogglePressed: cam && !this.prevCamera,
-      resetPressed: rst && !this.prevReset,
-      pausePressed: pse && !this.prevPause,
-      source: 'keyboard',
+      cam: camKey,
+      reset: resetKey,
+      pause: pauseKey,
     };
-    this.prevCamera = cam;
-    this.prevReset = rst;
-    this.prevPause = pse;
-    if (!this.enabled) {
-      out.throttle = 0; out.brake = 0; out.steer = 0; out.handbrake = false;
-    }
-    return out;
   }
-}
 
-function padBtn(p: Gamepad, i: number): boolean {
-  return p.buttons[i]?.pressed ?? false;
+  sample(): FrameInput {
+    const kb = this.keyboardControls();
+    const pad = this.pollPad();
+
+    const padActive =
+      pad !== null &&
+      (Math.abs(pad.steer) > 0.05 || pad.throttle > 0.05 || pad.brake > 0.05 || pad.handbrake);
+    if (padActive) this.padWasActive = true;
+    const kbActive = kb.throttle > 0 || kb.brake > 0 || kb.steer !== 0 || kb.handbrake;
+    if (kbActive) this.padWasActive = false;
+
+    let ctrl: VehicleControls;
+    if (this.padWasActive && pad) {
+      ctrl = { throttle: pad.throttle, brake: pad.brake, steer: pad.steer, handbrake: pad.handbrake };
+    } else {
+      ctrl = { throttle: kb.throttle, brake: kb.brake, steer: kb.steer, handbrake: kb.handbrake };
+    }
+    if (!this.enabled) ctrl = { throttle: 0, brake: 0, steer: 0, handbrake: false };
+
+    const camEdge = (kb.cam && !this.prevCamKey) || (!!pad?.cam && !this.prevCamPad);
+    const resetEdge = (kb.reset && !this.prevResetKey) || (!!pad?.resetBtn && !this.prevResetPad);
+    const pauseEdge = (kb.pause && !this.prevPauseKey) || (!!pad?.pauseBtn && !this.prevPausePad);
+    this.prevCamKey = kb.cam;
+    this.prevResetKey = kb.reset;
+    this.prevPauseKey = kb.pause;
+    this.prevCamPad = !!pad?.cam;
+    this.prevResetPad = !!pad?.resetBtn;
+    this.prevPausePad = !!pad?.pauseBtn;
+
+    return {
+      ...ctrl,
+      cameraTogglePressed: camEdge,
+      resetPressed: resetEdge,
+      pausePressed: pauseEdge,
+    };
+  }
 }
