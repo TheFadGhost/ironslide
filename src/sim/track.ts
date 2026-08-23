@@ -431,14 +431,38 @@ interface MeshBuilder {
   idx: number[];
 }
 
+/** Spatial cell size for roadbed collision partitioning (raycast culling). */
+const ROADBED_CELL = 110;
+
+class RoadbedMesh {
+  private cells = new Map<string, MeshBuilder>();
+  get(x: number, z: number): MeshBuilder {
+    const key = Math.floor(x / ROADBED_CELL) + ':' + Math.floor(z / ROADBED_CELL);
+    let b = this.cells.get(key);
+    if (!b) {
+      b = { verts: [], idx: [] };
+      this.cells.set(key, b);
+    }
+    return b;
+  }
+  all(): MeshBuilder[] {
+    return [...this.cells.values()];
+  }
+}
+
+function buildTrimesh(m: MeshBuilder): CANNON.Trimesh {
+  return new CANNON.Trimesh(m.verts, m.idx);
+}
+
 /** Adds an upward-facing quad from corners given in perimeter order. */
 function addQuad(
-  m: MeshBuilder,
+  road: RoadbedMesh,
   ax: number, ay: number, az: number,
   bx: number, by: number, bz: number,
   cx: number, cy: number, cz: number,
   dx: number, dy: number, dz: number
 ): void {
+  const m = road.get((ax + bx + cx + dx) / 4, (az + bz + cz + dz) / 4);
   const base = m.verts.length / 3;
   m.verts.push(ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz);
   // true cross product y-component of (b-a) x (c-a)
@@ -449,91 +473,17 @@ function addQuad(
 
 /** Top surface quad between two cross-sections (L=left of travel, R=right). */
 function addSectionTop(
-  m: MeshBuilder,
+  road: RoadbedMesh,
   l1x: number, l1y: number, l1z: number,
   r1x: number, r1y: number, r1z: number,
   l2x: number, l2y: number, l2z: number,
   r2x: number, r2y: number, r2z: number
 ): void {
-  addQuad(m, l1x, l1y, l1z, r1x, r1y, r1z, l2x, l2y, l2z, r2x, r2y, r2z);
+  addQuad(road, l1x, l1y, l1z, r1x, r1y, r1z, l2x, l2y, l2z, r2x, r2y, r2z);
 }
 
-/** Skirt wall hanging down from section edge points, plus slab bottom. */
-function addSlab(m: MeshBuilder, sections: { lx: number; ly: number; lz: number; rx: number; ry: number; rz: number }[], depth: number): void {
-  for (let i = 0; i < sections.length - 1; i++) {
-    const A = sections[i];
-    const B = sections[i + 1];
-    // left skirt
-    addQuad(m, A.lx, A.ly, A.lz, B.lx, B.ly, B.lz, A.lx, A.ly - depth, A.lz, B.lx, B.ly - depth, B.lz);
-    // right skirt
-    addQuad(m, B.rx, B.ry, B.rz, A.rx, A.ry, A.rz, B.rx, B.ry - depth, B.rz, A.rx, A.ry - depth, A.rz);
-    // bottom (faces down)
-    addQuad(m, A.rx, A.ry - depth, A.rz, B.rx, B.ry - depth, B.rz, A.lx, A.ly - depth, A.lz, B.lx, B.ly - depth, B.lz);
-  }
-}
-
-/** Vertical barrier walls along both edges of a run, with real thickness. */
-function addWallPair(m: MeshBuilder, run: Section[], height: number, gapAt?: (x: number, z: number) => boolean): void {
-  if (run.length < 2) return;
-  const THICK = 0.4;
-  const faces: Array<'l' | 'r'> = ['l', 'r'];
-  for (const faceSide of faces) {
-    // walk the chosen edge line; outward = normalize(edge - center)
-    interface Pt { x: number; y: number; z: number; ox: number; oz: number }
-    const line: Pt[] = [];
-    for (const s of run) {
-      const ex = s[faceSide + 'x' as 'lx' | 'rx'];
-      const ez = s[faceSide + 'z' as 'lz' | 'rz'];
-      const ey = s[faceSide + 'y' as 'ly' | 'ry'];
-      const cx = (s.lx + s.rx) / 2;
-      const cz = (s.lz + s.rz) / 2;
-      let ox = ex - cx;
-      let oz = ez - cz;
-      const ol = Math.hypot(ox, oz) || 1;
-      ox /= ol;
-      oz /= ol;
-      line.push({ x: ex, y: ey, z: ez, ox, oz });
-    }
-    for (let i = 0; i < line.length - 1; i++) {
-      const A = line[i];
-      const B = line[i + 1];
-      if (gapAt && gapAt((A.x + B.x) / 2, (A.z + B.z) / 2)) continue;
-      const aIT = [A.x, A.y + height, A.z];
-      const aIB = [A.x, A.y - 0.3, A.z];
-      const bIT = [B.x, B.y + height, B.z];
-      const bIB = [B.x, B.y - 0.3, B.z];
-      const aOT = [A.x + A.ox * THICK, A.y, A.z + A.oz * THICK];
-      const aOB = [A.x + A.ox * THICK, A.y - 0.3, A.z + A.oz * THICK];
-      const bOT = [B.x + B.ox * THICK, B.y, B.z + B.oz * THICK];
-      const bOB = [B.x + B.ox * THICK, B.y - 0.3, B.z + B.oz * THICK];
-      // inner face (toward road)
-      addQuad(m,
-        aIT[0], aIT[1], aIT[2],
-        aIB[0], aIB[1], aIB[2],
-        bIT[0], bIT[1], bIT[2],
-        bIB[0], bIB[1], bIB[2]);
-      // outer face
-      addQuad(m,
-        aOT[0], aOT[1], aOT[2],
-        aOB[0], aOB[1], aOB[2],
-        bOT[0], bOT[1], bOT[2],
-        bOB[0], bOB[1], bOB[2]);
-      // top cap
-      addQuad(m,
-        aIT[0], aIT[1], aIT[2],
-        bIT[0], bIT[1], bIT[2],
-        aOT[0], aOT[1], aOT[2],
-        bOT[0], bOT[1], bOT[2]);
-    }
-  }
-}
-function buildTrimesh(m: MeshBuilder): CANNON.Trimesh {
-  return new CANNON.Trimesh(m.verts, m.idx);
-}
-
-export function buildRoadbedBody(track: TrackData): CANNON.Body {
-  const body = new CANNON.Body({ mass: 0 });
-  const m: MeshBuilder = { verts: [], idx: [] };
+export function buildRoadbedBodies(track: TrackData): CANNON.Body[] {
+  const road = new RoadbedMesh();
   const sp = track.shortcutPath;
   const hasSc = sp.length >= 3;
 
@@ -560,15 +510,8 @@ export function buildRoadbedBody(track: TrackData): CANNON.Body {
     const flushWithWalls = (): void => {
       if (run.length >= 2) {
         for (let q = 0; q < run.length - 1; q++) {
-          addSectionTop(m, run[q].lx, run[q].ly, run[q].lz, run[q].rx, run[q].ry, run[q].rz, run[q + 1].lx, run[q + 1].ly, run[q + 1].lz, run[q + 1].rx, run[q + 1].ry, run[q + 1].rz);
+          addSectionTop(road, run[q].lx, run[q].ly, run[q].lz, run[q].rx, run[q].ry, run[q].rz, run[q + 1].lx, run[q + 1].ly, run[q + 1].lz, run[q + 1].rx, run[q + 1].ry, run[q + 1].rz);
         }
-        addSlab(m, run, 0.8);
-        addWallPair(m, run, 1.15, (wx, wz) => {
-          for (const z of track.surfaceZones) {
-            if (z.surface !== 'tarmac' && Math.hypot(wx - z.x, wz - z.z) < z.r + 2.5) return true;
-          }
-          return false;
-        });
         run = [];
       }
     };
@@ -594,10 +537,9 @@ export function buildRoadbedBody(track: TrackData): CANNON.Body {
       if (k === n || nearPath(p.x, p.z, 8)) {
         if (shRun.length >= 2) {
           for (let q = 0; q < shRun.length - 1; q++) {
-            addSectionTop(m, shRun[q].lx, shRun[q].ly, shRun[q].lz, shRun[q].rx, shRun[q].ry, shRun[q].rz, shRun[q + 1].lx, shRun[q + 1].ly, shRun[q + 1].lz, shRun[q + 1].rx, shRun[q + 1].ry, shRun[q + 1].rz);
+            addSectionTop(road, shRun[q].lx, shRun[q].ly, shRun[q].lz, shRun[q].rx, shRun[q].ry, shRun[q].rz, shRun[q + 1].lx, shRun[q + 1].ly, shRun[q + 1].lz, shRun[q + 1].rx, shRun[q + 1].ry, shRun[q + 1].rz);
           }
-          addSlab(m, shRun, 0.9);
-        }
+              }
         shRun = [];
       } else {
         shRun.push({
@@ -632,8 +574,8 @@ export function buildRoadbedBody(track: TrackData): CANNON.Body {
       rWall.push({ lx: s.rx, ly: s.ry - 0.3, lz: s.rz, rx: s.rx, ry: s.ry + 0.8, rz: s.rz });
     }
     for (let i = 0; i < lWall.length - 1; i++) {
-      addQuad(m, lWall[i].lx, lWall[i].ly, lWall[i].lz, lWall[i].rx, lWall[i].ry, lWall[i].rz, lWall[i + 1].lx, lWall[i + 1].ly, lWall[i + 1].lz, lWall[i + 1].rx, lWall[i + 1].ry, lWall[i + 1].rz);
-      addQuad(m, rWall[i].lx, rWall[i].ly, rWall[i].lz, rWall[i].rx, rWall[i].ry, rWall[i].rz, rWall[i + 1].lx, rWall[i + 1].ly, rWall[i + 1].lz, rWall[i + 1].rx, rWall[i + 1].ry, rWall[i + 1].rz);
+      addQuad(road, lWall[i].lx, lWall[i].ly, lWall[i].lz, lWall[i].rx, lWall[i].ry, lWall[i].rz, lWall[i + 1].lx, lWall[i + 1].ly, lWall[i + 1].lz, lWall[i + 1].rx, lWall[i + 1].ry, lWall[i + 1].rz);
+      addQuad(road, rWall[i].lx, rWall[i].ly, rWall[i].lz, rWall[i].rx, rWall[i].ry, rWall[i].rz, rWall[i + 1].lx, rWall[i + 1].ly, rWall[i + 1].lz, rWall[i + 1].rx, rWall[i + 1].ry, rWall[i + 1].rz);
     }
   }
 
@@ -655,9 +597,8 @@ export function buildRoadbedBody(track: TrackData): CANNON.Body {
       });
     }
     for (let i = 0; i < scSections.length - 1; i++) {
-      addSectionTop(m, scSections[i].lx, scSections[i].ly, scSections[i].lz, scSections[i].rx, scSections[i].ry, scSections[i].rz, scSections[i + 1].lx, scSections[i + 1].ly, scSections[i + 1].lz, scSections[i + 1].rx, scSections[i + 1].ry, scSections[i + 1].rz);
+      addSectionTop(road, scSections[i].lx, scSections[i].ly, scSections[i].lz, scSections[i].rx, scSections[i].ry, scSections[i].rz, scSections[i + 1].lx, scSections[i + 1].ly, scSections[i + 1].lz, scSections[i + 1].rx, scSections[i + 1].ry, scSections[i + 1].rz);
     }
-    addSlab(m, scSections, 0.8);
 
     // mouth aprons: flush quads over the trimmed road bites
     const apronAt = (jj: number): void => {
@@ -666,7 +607,7 @@ export function buildRoadbedBody(track: TrackData): CANNON.Body {
       const pA = pts[jA];
       const pB = pts[jB];
       addSectionTop(
-        m,
+        road,
         pA.x + pA.lx * (pA.width / 2), pA.y, pA.z + pA.lz * (pA.width / 2),
         pA.x - pA.lx * (pA.width / 2), pA.y, pA.z - pA.lz * (pA.width / 2),
         pB.x + pB.lx * (pB.width / 2), pB.y, pB.z + pB.lz * (pB.width / 2),
@@ -696,31 +637,14 @@ export function buildRoadbedBody(track: TrackData): CANNON.Body {
     apronAt(jOut);
     apronAt(jOut + 1);
 
-    // wedge fillers between main shoulder edge and shortcut edge at both mouths
-    const wedgePatch = (atStart: boolean): void => {
-      const sA = atStart ? sp[0] : sp[sp.length - 1];
-      const sB = atStart ? sp[1] : sp[sp.length - 2];
-      const jj = nearestMainTo(sA.x, sA.z);
-      const mm = pts[jj];
-      const sideSign = Math.sign((sA.x - mm.x) * mm.lx + (sA.z - mm.z) * mm.lz) || 1;
-      const hwM = mm.width / 2 + 3.5;
-      const e1x = mm.x + mm.lx * sideSign * hwM;
-      const e1z = mm.z + mm.lz * sideSign * hwM;
-      const e1y = mm.y - 0.07;
-      const sdx = sB.x - sA.x;
-      const sdz = sB.z - sA.z;
-      const sl = Math.hypot(sdx, sdz) || 1;
-      const sclx = sdz / sl;
-      const sclz = -sdx / sl;
-      const face = Math.sign(sclx * (mm.x - sA.x) + sclz * (mm.z - sA.z)) || 1;
-      const shw = (sB.width ?? 8) / 2 + 1.2;
-      const yW = Math.min(mm.y, sA.y) - 0.05;
-      addQuad(m, e1x, e1y, e1z, sA.x + sclx * face * shw, yW, sA.z + sclz * face * shw, e1x, e1y - 0.001, e1z + 4, sA.x + sclx * face * shw, yW - 0.001, sA.z + sclz * face * shw + 4);
-    };
-    wedgePatch(true);
-    wedgePatch(false);
   }
 
-  body.addShape(buildTrimesh(m));
-  return body;
+  const bodies: CANNON.Body[] = [];
+  for (const cell of road.all()) {
+    if (!cell.idx.length) continue;
+    const b = new CANNON.Body({ mass: 0 });
+    b.addShape(buildTrimesh(cell));
+    bodies.push(b);
+  }
+  return bodies;
 }

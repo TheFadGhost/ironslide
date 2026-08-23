@@ -1,6 +1,6 @@
 import * as CANNON from 'cannon-es';
 import { createPhysicsWorld } from '../../src/sim/world';
-import { buildTrack, buildRoadbedBody } from '../../src/sim/track';
+import { buildTrack, buildRoadbedBodies } from '../../src/sim/track';
 import { createVehicle, type Vehicle } from '../../src/sim/vehicle';
 import { createAIDriver } from '../../src/sim/ai';
 import { RaceManager } from '../../src/sim/race';
@@ -34,8 +34,9 @@ export interface HeadlessOpts {
 export function buildHeadlessWorld(): { world: CANNON.World; track: TrackData } {
   const world = createPhysicsWorld();
   const track = buildTrack();
-  const roadbed = buildRoadbedBody(track);
-  world.addBody(roadbed);
+  for (const rb of buildRoadbedBodies(track)) {
+    world.addBody(rb);
+  }
   const net = new CANNON.Body({ mass: 0 });
   net.addShape(new CANNON.Plane());
   net.quaternion.setFromEuler(-Math.PI / 2, 0, 0);

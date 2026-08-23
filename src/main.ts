@@ -10,7 +10,7 @@ import { GameAudio } from './audio/audio';
 import { InputSystem } from './core/input';
 import { createPhysicsWorld, worldMaterials } from './sim/world';
 import { RaceManager } from './sim/race';
-import { buildTrack, buildRoadbedBody } from './sim/track';
+import { buildTrack, buildRoadbedBodies } from './sim/track';
 import { createVehicle, type Vehicle } from './sim/vehicle';
 import { createAIDriver } from './sim/ai';
 import { createHud, ensureUiStyles } from './ui/hud';
@@ -39,9 +39,11 @@ buildEnvironment(kit.scene, track);
 const world = createPhysicsWorld();
 const { chassisMat, worldMat } = worldMaterials(world);
 
-const roadbed = buildRoadbedBody(track);
-roadbed.material = worldMat;
-world.addBody(roadbed);
+const roadbedBodies = buildRoadbedBodies(track);
+for (const rb of roadbedBodies) {
+  rb.material = worldMat;
+  world.addBody(rb);
+}
 
 // terrain safety net far below the circuit
 const net = new CANNON.Body({ mass: 0, material: worldMat });
