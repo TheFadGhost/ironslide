@@ -41,6 +41,7 @@ export function buildHeadlessWorld(): { world: CANNON.World; track: TrackData } 
   net.addShape(new CANNON.Plane());
   net.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
   net.position.set(0, -30, 0);
+  (net as unknown as { ironslideNoImpact?: boolean }).ironslideNoImpact = true;
   world.addBody(net);
   for (const spec of track.colliderSpecs) {
     const b = new CANNON.Body({ mass: 0 });

@@ -563,6 +563,10 @@ export class Vehicle implements VehicleLike {
   private onCollide = (e: { contact?: CANNON.ContactEquation | null }): void => {
     const c = e?.contact;
     if (!c) return;
+    // ignore kill-floor / non-world bodies so recovery physics never reads
+    // as gameplay impacts
+    const other = (c.bi === this.chassisBody ? c.bj : c.bi) as unknown as { ironslideNoImpact?: boolean };
+    if (other && other.ironslideNoImpact) return;
     const closing = Math.abs(c.getImpactVelocityAlongNormal());
     // momentum transfer proxy (N*s): closing speed x vehicle mass
     const proxy = clamp(closing * VEHICLE.mass, 0, 120000);

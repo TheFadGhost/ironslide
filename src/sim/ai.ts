@@ -355,9 +355,11 @@ class AIDriverImpl implements AIDriver {
 
     // corner-speed limit with backward deceleration sweep: collect per-sample
     // curvature allowances over the lookahead window, then propagate braking
-    // constraints backwards so distant corners cause early lifts
-    // low-grip wheels plan with a factor matching real gravel/oil grip ratios
-    const latA = (AI.latAccelBase + this.skill * AI.latAccelSkillScale) * (careful ? 0.55 : 1);
+    // constraints backwards so distant corners cause early lifts.
+    // low-grip wheels plan with factors matching real gravel/oil grip ratios
+    const carefulMul = careful ? 0.55 : 1;
+    const latA = (AI.latAccelBase + this.skill * AI.latAccelSkillScale) * carefulMul;
+    const planBrake = AI.brakeDecel * carefulMul;
     const iHere = Math.floor(wrap(me.dist, L) / spacing);
     const span = Math.ceil((fwdAbs * 1.6 + 60) / spacing);
     let nextAllow = VMAX_CAP;
@@ -365,7 +367,7 @@ class AIDriverImpl implements AIDriver {
       const p = track.points[(iHere + k) % n];
       const kk = Math.abs(p.curvature);
       // propagate braking constraint one sample at a time toward the present
-      const reach = Math.sqrt(nextAllow * nextAllow + 2 * AI.brakeDecel * spacing);
+      const reach = Math.sqrt(nextAllow * nextAllow + 2 * planBrake * spacing);
       const vCorner = kk >= CURV_FLOOR ? Math.sqrt(latA / kk) * PROFILE_SAFETY : VMAX_CAP;
       nextAllow = Math.min(vCorner, reach);
     }

@@ -111,8 +111,8 @@ export class RaceManager {
     }
 
     this.raceTime += dt;
-    const speeds = this.computeRubberBands();
-    const progress = this.progressList(); // once per tick, shared by all drivers
+    const progress = this.progressList(); // shared this tick
+    const speeds = this.computeRubberBands(progress);
 
     for (let i = 0; i < n; i++) {
       const veh = this.vehicles[i];
@@ -304,9 +304,9 @@ export class RaceManager {
     this.events.emit('autoReset', { id: t.id });
   }
 
-  private computeRubberBands(): number[] {
+  private computeRubberBands(progress: CarProgress[]): number[] {
     const speeds = new Array(this.trackers.length).fill(1);
-    const list = this.progressList();
+    const list = progress;
     const player = list.find((c) => c.id === this.playerId);
     if (!player) return speeds;
     for (let i = 0; i < this.trackers.length; i++) {

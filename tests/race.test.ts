@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { runHeadlessRace } from './helpers/simHarness';
 import { RaceManager } from '../src/sim/race';
 import { buildTrack } from '../src/sim/track';
-import type { TrackData, VehicleLike, VehicleState } from '../src/types';
+import type { CarProgress, TrackData, VehicleLike, VehicleState } from '../src/types';
 import { RACE } from '../src/config';
 
 function nullVehicle(id: number, x: number, z: number): VehicleLike {
@@ -100,8 +100,14 @@ describe('race logic', () => {
     const aiAhead = mk(2, 800);
     const race = new RaceManager(track, [player, aiFarBehind, aiAhead], [null, null, null], 0);
     race.phase = 'racing';
-    const speeds = (race as unknown as { computeRubberBands(): number[] }).computeRubberBands();
-    void speeds;
+    const speeds = (
+      race as unknown as { computeRubberBands(progress: CarProgress[]): number[] }
+    ).computeRubberBands(race.progressList());
+    // behind-player AI boosted, ahead-player AI slowed, both within +-band
+    expect(speeds[1]).toBeGreaterThan(1);
+    expect(speeds[2]).toBeLessThan(1);
+    expect(Math.abs(speeds[1] - 1)).toBeLessThanOrEqual(0.08);
+    expect(Math.abs(speeds[2] - 1)).toBeLessThanOrEqual(0.08);
     const snap = race.snapshot();
     expect(snap.cars.length).toBe(3);
     // leader is the furthest car

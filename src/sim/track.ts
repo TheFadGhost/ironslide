@@ -513,69 +513,31 @@ export function buildRoadbedBodies(track: TrackData): CANNON.Body[] {
   const sp = track.shortcutPath;
   const hasSc = sp.length >= 3;
 
-  const nearPath = (x: number, z: number, margin: number): boolean =>
-    hasSc && distToPath(x, z, sp) < margin;
-
-  // main driving ribbon, trimmed where the shortcut corridor crosses it
+  // Main driving ribbon: continuous, untrimmed. The shortcut path now runs at
+  // grade with no buried geometry, so overlap near the mouths is benign —
+  // trimming only ever created seams for cars to fall through.
   const pts = track.points;
   const n = pts.length;
-  // (main/shoulder/wall assembly happens below in one pass)
-  // rebuild main/shoulder runs a second time to attach walls (runs were flushed above)
-  {
-    let startIdx2 = 0;
-    if (hasSc) {
-      for (let k2 = 0; k2 < n; k2++) {
-        if (nearPath(pts[k2].x, pts[k2].z, 7.5)) {
-          startIdx2 = k2;
-          break;
-        }
-      }
-    }
-    let startSh = startIdx2;
-    let run: Section[] = [];
-    const flushWithWalls = (): void => {
-      if (run.length >= 2) {
-        for (let q = 0; q < run.length - 1; q++) {
-          addSectionTop(road, run[q].lx, run[q].ly, run[q].lz, run[q].rx, run[q].ry, run[q].rz, run[q + 1].lx, run[q + 1].ly, run[q + 1].lz, run[q + 1].rx, run[q + 1].ry, run[q + 1].rz);
-        }
-        run = [];
-      }
-    };
-    for (let k = 0; k <= n; k++) {
-      const idx2 = (startIdx2 + k) % n;
-      const p = pts[idx2];
-      if (k === n || nearPath(p.x, p.z, 7.5)) {
-        flushWithWalls();
-      } else {
-        run.push({
-          lx: p.x + p.lx * (p.width / 2 + 0.45), ly: p.y, lz: p.z + p.lz * (p.width / 2 + 0.45),
-          rx: p.x - p.lx * (p.width / 2 + 0.45), ry: p.y, rz: p.z - p.lz * (p.width / 2 + 0.45),
-        });
-      }
-    }
-    flushWithWalls();
-
-    // shoulder slab (safety net), no walls
-    let shRun: Section[] = [];
-    for (let k = 0; k <= n; k++) {
-      const idx2 = (startSh + k) % n;
-      const p = pts[idx2];
-      if (k === n || nearPath(p.x, p.z, 8)) {
-        if (shRun.length >= 2) {
-          for (let q = 0; q < shRun.length - 1; q++) {
-            addSectionTop(road, shRun[q].lx, shRun[q].ly, shRun[q].lz, shRun[q].rx, shRun[q].ry, shRun[q].rz, shRun[q + 1].lx, shRun[q + 1].ly, shRun[q + 1].lz, shRun[q + 1].rx, shRun[q + 1].ry, shRun[q + 1].rz);
-          }
-              }
-        shRun = [];
-      } else {
-        shRun.push({
-          lx: p.x + p.lx * (p.width / 2 + 3.5), ly: p.y - 0.07, lz: p.z + p.lz * (p.width / 2 + 3.5),
-          rx: p.x - p.lx * (p.width / 2 + 3.5), ry: p.y - 0.07, rz: p.z - p.lz * (p.width / 2 + 3.5),
-        });
-      }
-    }
+  for (let i = 0; i < n; i++) {
+    const pA = pts[i];
+    const pB = pts[(i + 1) % n];
+    addSectionTop(road,
+      pA.x + pA.lx * (pA.width / 2), pA.y, pA.z + pA.lz * (pA.width / 2),
+      pA.x - pA.lx * (pA.width / 2), pA.y, pA.z - pA.lz * (pA.width / 2),
+      pB.x + pB.lx * (pB.width / 2), pB.y, pB.z + pB.lz * (pB.width / 2),
+      pB.x - pB.lx * (pB.width / 2), pB.y, pB.z - pB.lz * (pB.width / 2));
   }
 
+  // shoulder slab top (safety net), continuous
+  for (let i = 0; i < n; i++) {
+    const pA = pts[i];
+    const pB = pts[(i + 1) % n];
+    addSectionTop(road,
+      pA.x + pA.lx * (pA.width / 2 + 3.5), pA.y - 0.07, pA.z + pA.lz * (pA.width / 2 + 3.5),
+      pA.x - pA.lx * (pA.width / 2 + 3.5), pA.y - 0.07, pA.z - pA.lz * (pA.width / 2 + 3.5),
+      pB.x + pB.lx * (pB.width / 2 + 3.5), pB.y - 0.07, pB.z + pB.lz * (pB.width / 2 + 3.5),
+      pB.x - pB.lx * (pB.width / 2 + 3.5), pB.y - 0.07, pB.z - pB.lz * (pB.width / 2 + 3.5));
+  }
   // shortcut corridor walls (lower)
   if (hasSc) {
     const scSections: Section[] = [];
@@ -625,43 +587,6 @@ export function buildRoadbedBodies(track: TrackData): CANNON.Body[] {
     for (let i = 0; i < scSections.length - 1; i++) {
       addSectionTop(road, scSections[i].lx, scSections[i].ly, scSections[i].lz, scSections[i].rx, scSections[i].ry, scSections[i].rz, scSections[i + 1].lx, scSections[i + 1].ly, scSections[i + 1].lz, scSections[i + 1].rx, scSections[i + 1].ry, scSections[i + 1].rz);
     }
-
-    // mouth aprons: flush quads over the trimmed road bites
-    const apronAt = (jj: number): void => {
-      const jA = (jj - 1 + n) % n;
-      const jB = jj % n;
-      const pA = pts[jA];
-      const pB = pts[jB];
-      addSectionTop(
-        road,
-        pA.x + pA.lx * (pA.width / 2), pA.y, pA.z + pA.lz * (pA.width / 2),
-        pA.x - pA.lx * (pA.width / 2), pA.y, pA.z - pA.lz * (pA.width / 2),
-        pB.x + pB.lx * (pB.width / 2), pB.y, pB.z + pB.lz * (pB.width / 2),
-        pB.x - pB.lx * (pB.width / 2), pB.y, pB.z - pB.lz * (pB.width / 2)
-      );
-    };
-    const nearestMainTo = (px: number, pz: number): number => {
-      let bi = 0;
-      let bd = Infinity;
-      for (let i = 0; i < n; i++) {
-        const dx = pts[i].x - px;
-        const dz = pts[i].z - pz;
-        const d = dx * dx + dz * dz;
-        if (d < bd) {
-          bd = d;
-          bi = i;
-        }
-      }
-      return bi;
-    };
-    const jIn = nearestMainTo(sp[0].x, sp[0].z);
-    const jOut = nearestMainTo(sp[sp.length - 1].x, sp[sp.length - 1].z);
-    apronAt(jIn - 1);
-    apronAt(jIn);
-    apronAt(jIn + 1);
-    apronAt(jOut - 1);
-    apronAt(jOut);
-    apronAt(jOut + 1);
 
   }
 
