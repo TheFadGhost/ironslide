@@ -69,7 +69,7 @@ const hud = createHud(uiRoot);
 hud.setVisible(false);
 const minimap = createMinimap(uiRoot);
 minimap.setVisible(false);
-const menu = createMenu(uiRoot, { onStart: () => startRace }, settings);
+const menu = createMenu(uiRoot, { onStart: () => startRace() }, settings);
 menu.show();
 const results = createResults(uiRoot, {
   onRematch: () => {
@@ -96,6 +96,8 @@ const aiSkills = AI.skillSpread;
 const aiNames = [CAR_COLORS[1].name, CAR_COLORS[2].name, CAR_COLORS[3].name];
 
 function startRace(): void {
+  menu.hide();
+  results.hide();
   for (const v of vehicles) v.removeFromWorld(world);
   vehicles = [];
   for (const m of meshes) {
@@ -490,6 +492,19 @@ function tick(now: number): void {
   frame(dt);
 }
 requestAnimationFrame(tick);
+
+// dev diagnostics hook
+(window as unknown as { __iron?: () => string }).__iron = () => {
+  if (!race) return 'no race';
+  const lines: string[] = [];
+  const snap = race.snapshot();
+  for (const c of snap.cars) {
+    lines.push(
+      `id${c.id} lap${c.lap} d${c.dist.toFixed(0)} tp${c.totalProgress.toFixed(0)} spd${c.state.speed.toFixed(1)} pos(${c.state.x.toFixed(0)},${c.state.y.toFixed(1)},${c.state.z.toFixed(0)})`
+    );
+  }
+  return lines.join('\n');
+};
 
 void GFX;
 void chassisMat;

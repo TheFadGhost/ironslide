@@ -34,7 +34,10 @@ export function createMenu(
   startBtn.className = 'is-startbtn';
   startBtn.type = 'button';
   startBtn.textContent = 'START RACE';
-  startBtn.addEventListener('click', cb.onStart);
+  startBtn.addEventListener('click', () => {
+    startBtn.blur();
+    cb.onStart();
+  });
 
   const cols = document.createElement('div');
   cols.className = 'is-cols';
