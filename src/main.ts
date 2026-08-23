@@ -17,7 +17,7 @@ import { createHud, ensureUiStyles } from './ui/hud';
 import { createMinimap } from './ui/minimap';
 import { createMenu, type MenuSettings } from './ui/menu';
 import { createResults, type ResultsRow } from './ui/results';
-import { AI, CAR_COLORS, GFX, PHYSICS, RACE, VEHICLE } from './config';
+import { AI, CAR_COLORS, PHYSICS, RACE, VEHICLE } from './config';
 import type { AIDriver, CarProgress, SurfaceId, TrackData } from './types';
 import * as CANNON from 'cannon-es';
 
@@ -34,10 +34,10 @@ kit.setPostFx(settings.postFx);
 
 const track: TrackData = buildTrack();
 buildTrackMesh(kit.scene, track);
-buildEnvironment(kit.scene, track);
+const env = buildEnvironment(kit.scene, track);
 
 const world = createPhysicsWorld();
-const { chassisMat, worldMat } = worldMaterials(world);
+const { worldMat } = worldMaterials(world);
 
 const roadbedBodies = buildRoadbedBodies(track);
 for (const rb of roadbedBodies) {
@@ -72,7 +72,17 @@ const hud = createHud(uiRoot);
 hud.setVisible(false);
 const minimap = createMinimap(uiRoot);
 minimap.setVisible(false);
-const menu = createMenu(uiRoot, { onStart: () => startRace() }, settings);
+const menu = createMenu(
+  uiRoot,
+  {
+    onStart: () => {
+      void audio.init(); // user gesture: satisfies autoplay policy
+      audio.setVolume(settings.masterVolume);
+      startRace();
+    },
+  },
+  settings
+);
 menu.show();
 const results = createResults(uiRoot, {
   onRematch: () => {
@@ -192,7 +202,7 @@ function showResults(standings: CarProgress[]): void {
       isPlayer: c.id === 0,
       bestLapMs: t && Number.isFinite(t.bestLap) ? t.bestLap * 1000 : null,
       totalTimeMs: c.finished ? c.finishTime * 1000 : null,
-      status: c.finished ? 'finished' : 'dnf',
+      status: c.finished ? 'finished' : race && race.snapshot().cars.every((x) => x.finished) ? 'dnf' : 'racing',
     };
   });
   const playerPos = rows.find((r) => r.isPlayer)?.pos ?? standings.length;
@@ -484,7 +494,33 @@ function frame(dtFrameRaw: number): void {
   void posIdx;
   minimap.drawFrame(list);
 
+  // live-apply menu settings (cheap diffed checks)
+  applySettings();
+
+  env.update(ps.x, ps.z);
   kit.renderFrame();
+}
+
+let lastApplied = { volume: -1, postFx: true, shadows: true };
+function applySettings(): void {
+  if (Math.abs(settings.masterVolume - lastApplied.volume) > 0.001) {
+    audio.setVolume(settings.masterVolume);
+    lastApplied.volume = settings.masterVolume;
+  }
+  if (settings.postFx !== lastApplied.postFx) {
+    kit.setPostFx(settings.postFx);
+    lastApplied.postFx = settings.postFx;
+  }
+  if (settings.shadows !== lastApplied.shadows) {
+    kit.renderer.shadowMap.enabled = settings.shadows;
+    kit.scene.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
+      if (Array.isArray(mat)) mat.forEach((mm) => (mm.needsUpdate = true));
+      else if (mat) mat.needsUpdate = true;
+    });
+    lastApplied.shadows = settings.shadows;
+  }
 }
 
 let acc = 0;
@@ -509,5 +545,3 @@ requestAnimationFrame(tick);
   return lines.join('\n');
 };
 
-void GFX;
-void chassisMat;

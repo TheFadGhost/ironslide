@@ -7,7 +7,7 @@ export interface ResultsRow {
   isPlayer: boolean;
   bestLapMs: number | null;
   totalTimeMs: number | null;
-  status: 'finished' | 'dnf';
+  status: 'finished' | 'dnf' | 'racing';
 }
 
 export function createResults(
@@ -91,7 +91,8 @@ export function createResults(
 
       const tdStatus = document.createElement('td');
       tdStatus.className = 'is-label';
-      tdStatus.textContent = r.status === 'dnf' ? 'DNF' : 'FIN';
+      tdStatus.textContent =
+        r.status === 'dnf' ? 'DNF' : r.status === 'racing' ? 'RACING' : 'FIN';
 
       trEl.append(tdPos, tdName, tdBest, tdTotal, tdStatus);
       tbody.appendChild(trEl);

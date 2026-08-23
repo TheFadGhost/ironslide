@@ -63,10 +63,8 @@ export const SURFACES: Record<string, { grip: number; rollDrag: number; label: s
 };
 
 export const AI = {
-  count: 3, // opponents besides player
   latAccelBase: 9.4, // m/s^2 steady-state cornering target
   latAccelSkillScale: 2.2, // added * skill
-  longAccel: 6.5, // used in backward pass
   brakeDecel: 9.0,
   lookaheadBase: 5.5, // m pure-pursuit, scales with speed below
   lookaheadPerSpeed: 0.42,
@@ -129,9 +127,5 @@ export const CAR_COLORS = [
 export const AUDIO = {
   masterDefault: 0.75,
   engineBaseFreq: 42,
-  tireNoiseFloor: 0.02,
 } as const;
 
-export const PERF = {
-  frameBudgetMs: 16.6,
-} as const;

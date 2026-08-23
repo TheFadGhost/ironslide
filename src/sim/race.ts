@@ -6,7 +6,7 @@ import type {
   VehicleControls,
   VehicleLike,
 } from '../types';
-import { RACE } from '../config';
+import { AI, RACE, VEHICLE } from '../config';
 import { Emitter } from '../core/events';
 
 export interface RaceEvents {
@@ -36,9 +36,6 @@ interface CarTracker extends CarProgress {
 
 const ZERO: VehicleControls = { throttle: 0, brake: 0, steer: 0, handbrake: false };
 const COAST: VehicleControls = { throttle: 0, brake: 0.3, steer: 0, handbrake: true };
-
-const AI_BAND_RANGE = 90;
-const AI_BAND_MAX = 0.075;
 
 export class RaceManager {
   events = new Emitter<RaceEvents>();
@@ -279,7 +276,7 @@ export class RaceManager {
         t.lastX = st.x;
         t.lastZ = st.z;
       }
-      if (t.flipTimer > 3.5 || t.wedgedTimer > (this.drivers[i] !== null ? 5.5 : 8)) {
+      if (t.flipTimer > VEHICLE.resetIfFlippedFor || t.wedgedTimer > (this.drivers[i] !== null ? 5.5 : 8)) {
         this.respawn(i);
       }
     }
@@ -313,8 +310,8 @@ export class RaceManager {
       const t = this.trackers[i];
       if (t.id === this.playerId) continue;
       const gap = player.totalProgress - t.totalProgress; // >0: AI behind player
-      const clamped = Math.max(-AI_BAND_RANGE, Math.min(AI_BAND_RANGE, gap));
-      speeds[i] = 1 + AI_BAND_MAX * (clamped / AI_BAND_RANGE);
+      const clamped = Math.max(-AI.rubberBandRange, Math.min(AI.rubberBandRange, gap));
+      speeds[i] = 1 + AI.rubberBandMax * (clamped / AI.rubberBandRange);
     }
     return speeds;
   }

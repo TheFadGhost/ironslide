@@ -56,12 +56,14 @@ npm install
 npm run dev      # vite dev server
 npm run build    # typecheck + production bundle to dist/
 npm test         # vitest: determinism, vehicle, race logic, track, collisions
-npm run sim      # headless full-race telemetry run
+npm run sim      # headless full-race telemetry run (JSON summary)
 ```
 
-The sim (`scripts/` + `tests/helpers/simHarness.ts`) runs complete AI-vs-AI
-races headless and reports lap times, falls, resets and NaN checks — the same
-harness backs the automated tests.
+The sim harness (`tests/helpers/simHarness.ts`) runs complete AI-vs-AI races
+headless and reports lap times, falls, resets and NaN checks - the same harness
+backs the automated tests. Two honest caveats: body damage accumulates for the
+whole race (no repairs), and running wide past the shoulder drops you off the
+world - you are respawned on track instantly.
 
 ## License
 

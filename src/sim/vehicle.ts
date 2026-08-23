@@ -545,7 +545,7 @@ export class Vehicle implements VehicleLike {
   getWheelVisual(i: number): { x: number; y: number; z: number; steer: number; spin: number } {
     this.raycastVehicle.updateWheelTransform(i);
     const t = this.raycastVehicle.wheelInfos[i].worldTransform;
-    this.wheelVisualSpin += this.raycastVehicle.wheelInfos[i].deltaRotation;
+    this.wheelVisualSpin = (this.wheelVisualSpin + this.raycastVehicle.wheelInfos[i].deltaRotation) % (Math.PI * 2);
     return { x: t.position.x, y: t.position.y, z: t.position.z, steer: this.steerAngle, spin: this.wheelVisualSpin };
   }
 
