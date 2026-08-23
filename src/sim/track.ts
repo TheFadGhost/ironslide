@@ -308,6 +308,51 @@ export function buildTrack(seed?: number): TrackData {
   // Barrier walls are continuous vertical ribbons merged into the roadbed
   // body (see buildRoadbedBody) - no boxes, no joints, no corner clipping.
   const colliderSpecs: ColliderSpec[] = [];
+  // Barrier collision boxes along the wall lines (cannon-es lacks
+  // Trimesh-vs-Box narrowphase, so the visible trimesh walls get matching
+  // box colliders). Adaptive span keeps corners accurate; sagitta +
+  // joint-sweep allowances keep faces clear of the roadway.
+  {
+    let i = 0;
+    while (i < N) {
+      const kap = Math.abs(points[i].curvature);
+      const spanMax = Math.sqrt((8 * 0.22) / Math.max(kap, 0.002));
+      const step = Math.max(1, Math.min(4, Math.floor(spanMax / spacing)));
+      const a = points[i];
+      const b = points[(i + step) % N];
+      const midIdx = (i + ((step / 2) | 0)) % N;
+      const midP = points[midIdx];
+      const mx = (a.x + b.x) / 2;
+      const mz = (a.z + b.z) / 2;
+      const myy = (a.y + b.y) / 2;
+      let mtx = b.tx + a.tx;
+      let mtz = b.tz + a.tz;
+      const mtl = Math.hypot(mtx, mtz) || 1;
+      mtx /= mtl;
+      mtz /= mtl;
+      const yaw = Math.atan2(mtx, mtz);
+      const spanLen = spacing * step;
+      let kapMax = kap;
+      for (let k = 0; k <= step; k++) {
+        kapMax = Math.max(kapMax, Math.abs(points[(i + k) % N].curvature));
+      }
+      const sag = kapMax * (spanLen * spanLen) / 8;
+      const hz = spanLen / 2 + 0.25;
+      const yawA = Math.atan2(a.tx, a.tz);
+      const yawBv = Math.atan2(b.tx, b.tz);
+      let dYaw = Math.abs(yawBv - yawA);
+      if (dYaw > Math.PI) dYaw = 2 * Math.PI - dYaw;
+      const cornerAllow = Math.sin(Math.min(dYaw / 2, Math.PI / 2)) * hz;
+      for (const side of [-1, 1]) {
+        const off = midP.width / 2 + 0.45 + sag + cornerAllow * 0.5;
+        const cx = mx + side * midP.lx * off;
+        const cz = mz + side * midP.lz * off;
+        if (distToPath(cx, cz, scPath) < 5.5) continue;
+        colliderSpecs.push({ kind: 'box', x: cx, y: myy + 0.55, z: cz, hx: 0.2, hy: 0.7, hz, yaw });
+      }
+      i += step;
+    }
+  }
   // Start point and grid.
   const p0 = points[0];
   const startPoint: GridSlot = {
@@ -427,31 +472,59 @@ function addSlab(m: MeshBuilder, sections: { lx: number; ly: number; lz: number;
   }
 }
 
-/** Vertical barrier walls along both edges of a run. */
-function addWallPair(
-  m: MeshBuilder,
-  run: Section[],
-  height: number,
-  gapAt?: (x: number, z: number) => boolean
-): void {
+/** Vertical barrier walls along both edges of a run, with real thickness. */
+function addWallPair(m: MeshBuilder, run: Section[], height: number, gapAt?: (x: number, z: number) => boolean): void {
   if (run.length < 2) return;
-  for (let i = 0; i < run.length - 1; i++) {
-    const A = run[i];
-    const B = run[i + 1];
-    // runoff gaps at marked zones (gravel traps etc.)
-    if (gapAt) {
-      const mx = (A.lx + A.rx) / 2;
-      const mz = (A.lz + A.rz) / 2;
-      if (gapAt(mx, mz)) continue;
+  const THICK = 0.4;
+  const faces: Array<'l' | 'r'> = ['l', 'r'];
+  for (const faceSide of faces) {
+    // walk the chosen edge line; outward = normalize(edge - center)
+    interface Pt { x: number; y: number; z: number; ox: number; oz: number }
+    const line: Pt[] = [];
+    for (const s of run) {
+      const ex = s[faceSide + 'x' as 'lx' | 'rx'];
+      const ez = s[faceSide + 'z' as 'lz' | 'rz'];
+      const ey = s[faceSide + 'y' as 'ly' | 'ry'];
+      const cx = (s.lx + s.rx) / 2;
+      const cz = (s.lz + s.rz) / 2;
+      let ox = ex - cx;
+      let oz = ez - cz;
+      const ol = Math.hypot(ox, oz) || 1;
+      ox /= ol;
+      oz /= ol;
+      line.push({ x: ex, y: ey, z: ez, ox, oz });
     }
-    // left wall
-    addQuad(m,
-      A.lx, A.ly + height, A.lz, A.lx, A.ly - 0.3, A.lz,
-      B.lx, B.ly + height, B.lz, B.lx, B.ly - 0.3, B.lz);
-    // right wall
-    addQuad(m,
-      A.rx, A.ry - 0.3, A.rz, A.rx, A.ry + height, A.rz,
-      B.rx, B.ry - 0.3, B.rz, B.rx, B.ry + height, B.rz);
+    for (let i = 0; i < line.length - 1; i++) {
+      const A = line[i];
+      const B = line[i + 1];
+      if (gapAt && gapAt((A.x + B.x) / 2, (A.z + B.z) / 2)) continue;
+      const aIT = [A.x, A.y + height, A.z];
+      const aIB = [A.x, A.y - 0.3, A.z];
+      const bIT = [B.x, B.y + height, B.z];
+      const bIB = [B.x, B.y - 0.3, B.z];
+      const aOT = [A.x + A.ox * THICK, A.y, A.z + A.oz * THICK];
+      const aOB = [A.x + A.ox * THICK, A.y - 0.3, A.z + A.oz * THICK];
+      const bOT = [B.x + B.ox * THICK, B.y, B.z + B.oz * THICK];
+      const bOB = [B.x + B.ox * THICK, B.y - 0.3, B.z + B.oz * THICK];
+      // inner face (toward road)
+      addQuad(m,
+        aIT[0], aIT[1], aIT[2],
+        aIB[0], aIB[1], aIB[2],
+        bIT[0], bIT[1], bIT[2],
+        bIB[0], bIB[1], bIB[2]);
+      // outer face
+      addQuad(m,
+        aOT[0], aOT[1], aOT[2],
+        aOB[0], aOB[1], aOB[2],
+        bOT[0], bOT[1], bOT[2],
+        bOB[0], bOB[1], bOB[2]);
+      // top cap
+      addQuad(m,
+        aIT[0], aIT[1], aIT[2],
+        bIT[0], bIT[1], bIT[2],
+        aOT[0], aOT[1], aOT[2],
+        bOT[0], bOT[1], bOT[2]);
+    }
   }
 }
 function buildTrimesh(m: MeshBuilder): CANNON.Trimesh {
